@@ -1,7 +1,14 @@
 # depslib dependency file v1.0
-1417311195 source:c:\mingw\msys\1.0\home\will\workspace\pathwayz\main.c
+1418675250 source:c:\mingw\msys\1.0\home\will\workspace\pathwayz\main.c
 	<stdio.h>
 	<stdlib.h>
 	<string.h>
 	<time.h>
+	<math.h>
+	"khash.h"
+
+1418001780 c:\mingw\msys\1.0\home\will\workspace\pathwayz\khash.h
+	<stdlib.h>
+	<string.h>
+	<limits.h>
 

@@ -2,29 +2,38 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
+#include "khash.h"
 
 #define TRUE 1
 #define FALSE 0
+typedef struct{
+    int wins;
+    int visits;
+} gamestate_stats;
+
+KHASH_MAP_INIT_STR(str, gamestate_stats)
 
 /* -- Pathwayz Reference --
 * Cell States:
-*   0 -> empty
-*   1 -> solid white
-*   2 -> solid black
-*   3 -> white with black dot
-*   4 -> black with white dot
-* gamestate[96] = player (0 = white, 1 = black)
+*   1 -> empty
+*   2 -> solid white
+*   3 -> solid black
+*   4 -> white with black dot
+*   5 -> black with white dot
+* gamestate[96] = player (1 = white, 2 = black)
+* gamestate[97] = 0
 */
 
 //Global Constants
 const int PLAYERS = 2;
 const int GAMESTATE_SIZE = 97; //squares on a pathwayz board plus current player
-const int MAX_RECUR_DEPTH = 2;
 const int BOARD_ROWS = 8;
 const int BOARD_COLS = 12;
-const int NUM_SIMULATIONS = 100000;
+const int NUM_SIMULATIONS = 10000;
 
 //Global Variables
+khash_t(str) *simulationData;
 
 //Function Prototypes
 void initializeGameState(char* gamestate);
@@ -34,12 +43,15 @@ int doesPathTraverse(char* gamestate, int row, int col, int player);
 int getWinner(char* gamestate); //returns -1 if game is not yet over
 char** getLegalNextGameStates(char* gamestate,int* numNextGameStates); //returns null if no available transitions
 float* unweightedWinStatistics(char* gamestate);
-float* weightedWinStatistics(char* gamestate, int recurDepth, int maxRecurDepth);
+int playRandomSimulation(char* gamestate); //returns winner
+int simulateGame(char* gamestate); //returns winner
+char* getBestMove(char* gamestate);
 
 //Functions
 void initializeGameState(char* gamestate){
-    memset(gamestate,0,GAMESTATE_SIZE*sizeof(char));
+    memset(gamestate,1,GAMESTATE_SIZE*sizeof(char)+1);
     gamestate[GAMESTATE_SIZE-1] = 1;
+    gamestate[GAMESTATE_SIZE] = 0;
 }
 
 int parseFileIntoGameState(char* gamestate, char *filename){
@@ -73,19 +85,19 @@ void printGameState(char* gamestate, FILE* output){
     for(i=0; i<BOARD_ROWS; i++){
         for(j=0; j<BOARD_COLS; j++){
             switch(gamestate[i*BOARD_COLS+j]){
-                case 0:
+                case 1:
                     fprintf(output,"   ");
                     break;
-                case 1:
+                case 2:
                     fprintf(output," O ");
                     break;
-                case 2:
+                case 3:
                     fprintf(output," X ");
                     break;
-                case 3:
+                case 4:
                     fprintf(output,"<O>");
                     break;
-                case 4:
+                case 5:
                     fprintf(output,"<X>");
                     break;
                 default:
@@ -109,10 +121,10 @@ int getWinner(char* gamestate){
     blackInCol = 0;
     for(i=0;i<BOARD_ROWS;i++){
         c = gamestate[i*BOARD_COLS];
-        if(c==1 || c==3){
+        if(c==2 || c==4){
             connectivity[i*BOARD_COLS] = 1;
             whiteInCol = 1;
-        }else if(c==2 || c==4){
+        }else if(c==3 || c==5){
             connectivity[i*BOARD_COLS] = 2;
             blackInCol = 1;
         }
@@ -128,7 +140,7 @@ int getWinner(char* gamestate){
             for(i=0;i<BOARD_ROWS;i++){
                 if(connectivity[i*BOARD_COLS+j]) continue;
                 c = gamestate[i*BOARD_COLS+j];
-                if(c==1 || c==3){
+                if(c==2 || c==4){
                     for(p=-1;p<2;p++){
                         for(q=-1;q<2;q++){
                             if( (i+p)<0 || (i+p)>=BOARD_ROWS || (j+q)<0 || (j+q)>=BOARD_COLS ) continue;
@@ -138,7 +150,7 @@ int getWinner(char* gamestate){
                             }
                         }
                     }
-                }else if(c==2 || c==4){
+                }else if(c==3 || c==5){
                     for(p=-1;p<2;p++){
                         for(q=-1;q<2;q++){
                             if( (i+p)<0 || (i+p)>=BOARD_ROWS || (j+q)<0 || (j+q)>=BOARD_COLS ) continue;
@@ -175,104 +187,108 @@ int getWinner(char* gamestate){
 }
 
 char** getLegalNextGameStates(char* gamestate,int* numNextGameStates){
-    int i,currPlayer,nextPlayer,row,col;
+    int i,k,currPlayer,nextPlayer,row,col;
     char** nextGameStates;
-    int switches[6] = {0,2,1,3,4,5};
+    int switches[7] = {0,1,3,2,4,5,6};
 
     *numNextGameStates = 0;
     for(i=0;i<BOARD_ROWS*BOARD_COLS;i++){
-        if(gamestate[i]==0){
+        if(gamestate[i]==1){
             *numNextGameStates+=2;
         }
     }
 
     if(*numNextGameStates==0){
-        return (char**)0;
+        return NULL;
     }
 
-    nextGameStates = (char**)malloc(*numNextGameStates*sizeof(char*));
-
-    for(i=0;i<BOARD_ROWS*BOARD_COLS;i++){
-        if(gamestate[i]==0){
-            nextGameStates[2*i] = (char*)malloc(GAMESTATE_SIZE*sizeof(char));
-            nextGameStates[2*i+1] = (char*)malloc(GAMESTATE_SIZE*sizeof(char));
-            memcpy(nextGameStates[2*i],gamestate,GAMESTATE_SIZE*sizeof(char));
-            memcpy(nextGameStates[2*i+1],gamestate,GAMESTATE_SIZE*sizeof(char));
+    nextGameStates = (char**)malloc((*numNextGameStates)*sizeof(char*));
+    i=0;
+    for(k=0;k<BOARD_ROWS*BOARD_COLS;k++){
+        if(gamestate[k]==1){
+            nextGameStates[2*i] = (char*)malloc(GAMESTATE_SIZE*sizeof(char)+1);
+            nextGameStates[2*i+1] = (char*)malloc(GAMESTATE_SIZE*sizeof(char)+1);
+            memcpy(nextGameStates[2*i],gamestate,GAMESTATE_SIZE*sizeof(char)+1);
+            memcpy(nextGameStates[2*i+1],gamestate,GAMESTATE_SIZE*sizeof(char)+1);
             currPlayer = gamestate[GAMESTATE_SIZE-1];
             nextPlayer = currPlayer==1?2:1;
             nextGameStates[2*i][GAMESTATE_SIZE-1] = nextPlayer;
             nextGameStates[2*i+1][GAMESTATE_SIZE-1] = nextPlayer;
-            nextGameStates[2*i][i] = currPlayer;
-            nextGameStates[2*i+1][i] = nextPlayer+2;
-            row = i/BOARD_COLS;
-            col = i%BOARD_COLS;
+            nextGameStates[2*i][k] = currPlayer+1;
+            nextGameStates[2*i+1][k] = nextPlayer+3;
+            row = k/BOARD_COLS;
+            col = k%BOARD_COLS;
             if(row>0){
-                nextGameStates[2*i+1][i-BOARD_COLS  ] = switches[(int)nextGameStates[2*i+1][i-BOARD_COLS  ]];
+                nextGameStates[2*i+1][k-BOARD_COLS  ] = switches[(int)nextGameStates[2*i+1][k-BOARD_COLS  ]];
                 if(col>0){
-                    nextGameStates[2*i+1][i-BOARD_COLS-1] = switches[(int)nextGameStates[2*i+1][i-BOARD_COLS-1]];
+                    nextGameStates[2*i+1][k-BOARD_COLS-1] = switches[(int)nextGameStates[2*i+1][k-BOARD_COLS-1]];
                 }
                 if(col<BOARD_COLS-1){
-                    nextGameStates[2*i+1][i-BOARD_COLS+1] = switches[(int)nextGameStates[2*i+1][i-BOARD_COLS+1]];
+                    nextGameStates[2*i+1][k-BOARD_COLS+1] = switches[(int)nextGameStates[2*i+1][k-BOARD_COLS+1]];
                 }
             }
             if(row<BOARD_ROWS-1){
-                nextGameStates[2*i+1][i+BOARD_COLS  ] = switches[(int)nextGameStates[2*i+1][i+BOARD_COLS  ]];
+                nextGameStates[2*i+1][k+BOARD_COLS  ] = switches[(int)nextGameStates[2*i+1][k+BOARD_COLS  ]];
                 if(col>0){
-                    nextGameStates[2*i+1][i+BOARD_COLS-1] = switches[(int)nextGameStates[2*i+1][i+BOARD_COLS-1]];
+                    nextGameStates[2*i+1][k+BOARD_COLS-1] = switches[(int)nextGameStates[2*i+1][k+BOARD_COLS-1]];
                 }
                 if(col<BOARD_COLS-1){
-                    nextGameStates[2*i+1][i+BOARD_COLS+1] = switches[(int)nextGameStates[2*i+1][i+BOARD_COLS+1]];
+                    nextGameStates[2*i+1][k+BOARD_COLS+1] = switches[(int)nextGameStates[2*i+1][k+BOARD_COLS+1]];
                 }
             }
             if(col>0){
-                nextGameStates[2*i+1][i           -1] = switches[(int)nextGameStates[2*i+1][i           -1]];
+                nextGameStates[2*i+1][k           -1] = switches[(int)nextGameStates[2*i+1][k           -1]];
             }
             if(col<BOARD_COLS-1){
-                nextGameStates[2*i+1][i           +1] = switches[(int)nextGameStates[2*i+1][i           +1]];
+                nextGameStates[2*i+1][k           +1] = switches[(int)nextGameStates[2*i+1][k           +1]];
             }
+            i++;
         }
     }
+    //printf("nextGameStates: %p\n",nextGameStates);
     return nextGameStates;
 }
 
 float* unweightedWinStatistics(char* gamestate){
-    int k,i,j,whiteWins,blackWins,winner,numNextGameStates,currPlayer,nextPlayer,row,col,simulations;
-    int switches[6] = {0,2,1,3,4,5};
+    int k,i,j,q,whiteWins,blackWins,winner,numEmptyLocs,currPlayer,nextPlayer,row,col,simulations;
+    int switches[7] = {0,1,3,2,4,5,6};
+    int emptyLocs[96];
     char* playingGame;
     float* winStats;
 
-    srand(time(NULL));
-
     winStats = (float*)malloc(PLAYERS*sizeof(float));
-    playingGame = (char*)malloc(GAMESTATE_SIZE*sizeof(char));
+    playingGame = (char*)malloc(GAMESTATE_SIZE*sizeof(char)+1);
 
     simulations = 0;
     whiteWins = 0;
     blackWins = 0;
 
     for(k=0;k<NUM_SIMULATIONS;k++){
-        memcpy(playingGame,gamestate,GAMESTATE_SIZE*sizeof(char));
+        memcpy(playingGame,gamestate,GAMESTATE_SIZE*sizeof(char)+1);
         while(-1 == (winner=getWinner(playingGame))){
-            numNextGameStates = 0;
+            numEmptyLocs = 0;
+            q = 0;
             for(i=0;i<BOARD_ROWS*BOARD_COLS;i++){
-                if(gamestate[i]==0){
-                    numNextGameStates+=2;
+                if(playingGame[i]==1){
+                    numEmptyLocs++;
+                    emptyLocs[q] = i;
+                    q++;
                 }
             }
-            if(numNextGameStates==0){
-                printf("Found a draw...\n");
+            if(numEmptyLocs==0){
+                winner = playingGame[GAMESTATE_SIZE-1];
                 break;
             }
-            i = rand()%numNextGameStates;
-            j = i/2;
+            i = rand()%numEmptyLocs;
+            j = emptyLocs[i];
             currPlayer = playingGame[GAMESTATE_SIZE-1];
             nextPlayer = currPlayer==1?2:1;
-            if(i%2==0){
-                playingGame[j] = currPlayer;
+            if(rand()%2==0){
+                playingGame[j] = currPlayer+1;
             }else{
                 row = j/BOARD_COLS;
                 col = j%BOARD_COLS;
-                playingGame[j] = nextPlayer+2;
+                playingGame[j] = nextPlayer+3;
                 if(row>0){
                     playingGame[j-BOARD_COLS  ] = switches[(int)playingGame[j-BOARD_COLS  ]];
                     if(col>0){
@@ -317,15 +333,242 @@ float* unweightedWinStatistics(char* gamestate){
     return winStats;
 }
 
-float* weightedWinStatistics(char* gamestate, int recurDepth, int maxRecurDepth){
-    //THIS METHOD DOES NOTHING RIGHT NOW...
-    char** nextGameStates;
-    return (float*)0;
+int playRandomSimulation(char* gamestate){
+    int i,j,k,winner,numEmptyLocs,currPlayer,nextPlayer,row,col;
+    int switches[7] = {0,1,3,2,4,5,6};
+    int emptyLocs[96];
+    char* playingGame;
+
+    playingGame = (char*)malloc(GAMESTATE_SIZE*sizeof(char)+1);
+    memcpy(playingGame,gamestate,GAMESTATE_SIZE*sizeof(char)+1);
+
+    while(-1 == (winner=getWinner(playingGame))){
+        numEmptyLocs = 0;
+        k = 0;
+        for(i=0;i<BOARD_ROWS*BOARD_COLS;i++){
+            if(playingGame[i]==1){
+                numEmptyLocs++;
+                emptyLocs[k] = i;
+                k++;
+            }
+        }
+        if(numEmptyLocs==0){
+            winner = playingGame[GAMESTATE_SIZE-1];
+            break;
+        }
+        i = rand()%numEmptyLocs;
+        j = emptyLocs[i];
+        currPlayer = playingGame[GAMESTATE_SIZE-1];
+        nextPlayer = currPlayer==1?2:1;
+        if(rand()%2==0){
+            playingGame[j] = currPlayer+1;
+        }else{
+            row = j/BOARD_COLS;
+            col = j%BOARD_COLS;
+            playingGame[j] = nextPlayer+3;
+            if(row>0){
+                playingGame[j-BOARD_COLS  ] = switches[(int)playingGame[j-BOARD_COLS  ]];
+                if(col>0){
+                    playingGame[j-BOARD_COLS-1] = switches[(int)playingGame[j-BOARD_COLS-1]];
+                }
+                if(col<BOARD_COLS-1){
+                    playingGame[j-BOARD_COLS+1] = switches[(int)playingGame[j-BOARD_COLS+1]];
+                }
+            }
+            if(row<BOARD_ROWS-1){
+                playingGame[j+BOARD_COLS  ] = switches[(int)playingGame[j+BOARD_COLS  ]];
+                if(col>0){
+                    playingGame[j+BOARD_COLS-1] = switches[(int)playingGame[j+BOARD_COLS-1]];
+                }
+                if(col<BOARD_COLS-1){
+                    playingGame[j+BOARD_COLS+1] = switches[(int)playingGame[j+BOARD_COLS+1]];
+                }
+            }
+            if(col>0){
+                playingGame[j           -1] = switches[(int)playingGame[j           -1]];
+            }
+            if(col<BOARD_COLS-1){
+                playingGame[j           +1] = switches[(int)playingGame[j           +1]];
+            }
+        }
+        playingGame[GAMESTATE_SIZE-1] = nextPlayer;
+    }
+    free(playingGame);
+    return winner;
+}
+
+int simulateGame(char* gamestate){
+    int i,j,winner,numNextGameStates,pickRandom,team,totalVisits,ret;
+    double score,bestScore,lnTotalVisits;
+    char* bestNextState;
+    char** nextStates;
+    khiter_t ptr;
+    team = gamestate[GAMESTATE_SIZE-1];
+    //printf("DEBUG (2.1.1)\n");
+    if(-1 != (winner=getWinner(gamestate))){
+        ptr = kh_get(str,simulationData,gamestate);
+        if(ptr == kh_end(simulationData)){
+            ptr = kh_put(str,simulationData,gamestate,&ret);
+        }
+        kh_value(simulationData,ptr).visits = 1;
+        if(winner==3-team){
+            kh_value(simulationData,ptr).wins = 1;
+        }else{
+            kh_value(simulationData,ptr).wins = 0;
+        }
+        return winner;
+    }
+    //printf("DEBUG (2.1.2)\n");
+    nextStates = getLegalNextGameStates(gamestate,&numNextGameStates);
+    //printf("DEBUG (2.1.3)\n");
+    pickRandom = 0;
+    totalVisits = 0;
+    for(i=0;i<numNextGameStates;i++){
+        //printf("simulationData=%p\n",simulationData);
+        //printf("n_buckets=%i, keys=%p\n",simulationData->n_buckets,simulationData->keys);
+        //printf("nextStates[i]=%s\n",nextStates[i]);
+        ptr = kh_get(str,simulationData,nextStates[i]);
+        //printf("DEBUG 2.1.3.1\n");
+        if(ptr == kh_end(simulationData)){
+            pickRandom = 1;
+            break;
+        }
+        totalVisits += kh_value(simulationData,ptr).visits;
+    }
+    //printf("DEBUG (2.1.4)\n");
+    bestNextState = NULL;
+    if(!pickRandom){
+        bestScore = 0.0;
+        lnTotalVisits = log((double)totalVisits);
+        for(i=0;i<numNextGameStates;i++){
+            ptr = kh_get(str,simulationData,nextStates[i]);
+            score = (double)kh_value(simulationData,ptr).wins/(double)kh_value(simulationData,ptr).visits +
+                    1.41421356 * sqrt(lnTotalVisits/(double)kh_value(simulationData,ptr).visits);
+            if(score>bestScore){
+                bestScore = score;
+                if(bestNextState!=NULL){
+                    free(bestNextState);
+                }
+                bestNextState = nextStates[i];
+            }else{
+                free(nextStates[i]);
+            }
+        }
+    }else{
+        i = rand()%numNextGameStates;
+        bestNextState = nextStates[i];
+        for(j=0;j<numNextGameStates;j++){
+            if(j!=i){
+                free(nextStates[j]);
+            }
+        }
+    }
+    free(nextStates);
+    if(bestNextState==NULL){
+        winner = gamestate[GAMESTATE_SIZE-1];
+        ptr = kh_get(str,simulationData,gamestate);
+        if(ptr == kh_end(simulationData)){
+            ptr = kh_put(str,simulationData,gamestate,&ret);
+        }
+        kh_value(simulationData,ptr).visits = 1;
+        if(winner==team){
+            kh_value(simulationData,ptr).wins = 1;
+        }else{
+            kh_value(simulationData,ptr).wins = 0;
+        }
+        return winner;
+    }
+    if(pickRandom){
+        winner = playRandomSimulation(bestNextState);
+        ptr = kh_get(str,simulationData,bestNextState);
+        if(ptr == kh_end(simulationData)){
+            ptr = kh_put(str,simulationData,bestNextState,&ret);
+            kh_value(simulationData,ptr).visits = 1;
+            if(winner==team){
+                kh_value(simulationData,ptr).wins = 1;
+            }else{
+                kh_value(simulationData,ptr).wins = 0;
+            }
+        }else{
+            kh_value(simulationData,ptr).visits++;
+            if(winner==team){
+                kh_value(simulationData,ptr).wins++;
+            }
+        }
+    }else{
+        winner = simulateGame(bestNextState);
+        ptr = kh_get(str,simulationData,bestNextState);
+        if(ptr == kh_end(simulationData)){
+            printf("WE HAVE A PROBLEM (2).\n");
+        }
+        kh_value(simulationData,ptr).visits++;
+        if(winner==team){
+            kh_value(simulationData,ptr).wins++;
+        }
+    }
+    //printf("DEBUG (2.1.7)\n");
+    //free(bestNextState);
+    //printf("DEBUG (2.1.8)\n");
+    return winner;
+}
+
+char* getBestMove(char* gamestate){
+    int i,sim,numNextGameStates,totalVisits;
+    double score,bestScore,lnTotalVisits;
+    char** nextStates;
+    char* bestNextState;
+    khiter_t ptr;
+    //printf("DEBUG (2.1)\n");
+    for(sim=0;sim<NUM_SIMULATIONS;sim++){
+        simulateGame(gamestate);
+    }
+    //printf("DEBUG (2.2)\n");
+    bestScore = 0;
+    totalVisits = 0;
+    bestNextState = NULL;
+    nextStates = getLegalNextGameStates(gamestate,&numNextGameStates);
+    //printf("DEBUG (2.3)\n");
+    for(i=0;i<numNextGameStates;i++){
+        ptr = kh_get(str,simulationData,nextStates[i]);
+        if(ptr == kh_end(simulationData)) continue;
+        totalVisits += kh_value(simulationData,ptr).visits;
+    }
+    //printf("DEBUG (2.4)\n");
+    lnTotalVisits = log((double)totalVisits);
+    for(i=0;i<numNextGameStates;i++){
+        ptr = kh_get(str,simulationData,nextStates[i]);
+        if(ptr == kh_end(simulationData)){
+            free(nextStates[i]);
+            continue;
+        }
+//        score = (double)kh_value(simulationData,ptr).wins/(double)kh_value(simulationData,ptr).visits +
+//                1.41421356 * sqrt(lnTotalVisits/(double)kh_value(simulationData,ptr).visits);
+        score = (double)kh_value(simulationData,ptr).visits;
+        if(score>bestScore){
+            bestScore = score;
+            if(bestNextState!=NULL){
+                free(bestNextState);
+            }
+            bestNextState = nextStates[i];
+        }else{
+            free(nextStates[i]);
+        }
+    }
+    //printf("DEBUG (2.5)\n");
+    free(nextStates);
+    if(bestNextState==NULL){
+        printf("WE HAVE A PROBLEM (1).\n");
+    }
+    //printf("DEBUG (2.6)\n");
+    return bestNextState;
 }
 
 //Main
 int main(int argc, char **argv){
-    char* gamestate = (char*)malloc(GAMESTATE_SIZE*sizeof(char));
+    int winner;
+    char* gamestate = (char*)malloc(GAMESTATE_SIZE*sizeof(char)+1);
+    srand(time(NULL));
+    simulationData = kh_init(str); //Setup the global map
     initializeGameState(gamestate);
     if(argc > 1){
         if(parseFileIntoGameState(gamestate, argv[1]) == 0){
@@ -335,7 +578,7 @@ int main(int argc, char **argv){
             return 1;
         }
     }
-    int i,j,numNextGameStates;
+    /*int i,j,numNextGameStates;
     FILE* outfile = fopen("output.txt","w");
     char** nextStates = getLegalNextGameStates(gamestate,&numNextGameStates);
     float* stats;
@@ -351,6 +594,16 @@ int main(int argc, char **argv){
             fprintf(outfile,"%7f,",whiteWinsBoard[i*BOARD_COLS+j]);
         }
         fprintf(outfile,"\n");
+    }*/
+    //printf("DEBUG (1)\n");
+    while(-1 == (winner=getWinner(gamestate))){
+        //printf("DEBUG (2)\n");
+        gamestate = getBestMove(gamestate);
+        //printf("DEBUG (3)\n");
+        printGameState(gamestate,stdout);
+        //printf("DEBUG (4)\n");
     }
+    fprintf(stdout,"Winner: %i\n",winner);
+    kh_destroy(str,simulationData);
     return 0;
 }
