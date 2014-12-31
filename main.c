@@ -5,8 +5,6 @@
 #include <math.h>
 #include "khash.h"
 
-#define TRUE 1
-#define FALSE 0
 typedef struct{
     int wins;
     int visits;
@@ -22,7 +20,7 @@ KHASH_MAP_INIT_STR(str, gamestate_stats)
 *   4 -> white with black dot
 *   5 -> black with white dot
 * gamestate[96] = player (1 = white, 2 = black)
-* gamestate[97] = 0
+* gamestate[97] = 0 (terminating character)
 */
 
 //Global Constants
@@ -30,7 +28,7 @@ const int PLAYERS = 2;
 const int GAMESTATE_SIZE = 97; //squares on a pathwayz board plus current player
 const int BOARD_ROWS = 8;
 const int BOARD_COLS = 12;
-const int NUM_SIMULATIONS = 10000;
+const int NUM_SIMULATIONS = 100000;
 
 //Global Variables
 khash_t(str) *simulationData;
@@ -42,7 +40,6 @@ void printGameState(char* gamestate, FILE* output);
 int doesPathTraverse(char* gamestate, int row, int col, int player);
 int getWinner(char* gamestate); //returns -1 if game is not yet over
 char** getLegalNextGameStates(char* gamestate,int* numNextGameStates); //returns null if no available transitions
-float* unweightedWinStatistics(char* gamestate);
 int playRandomSimulation(char* gamestate); //returns winner
 int simulateGame(char* gamestate); //returns winner
 char* getBestMove(char* gamestate);
@@ -180,7 +177,7 @@ int getWinner(char* gamestate){
     }else if(blackWins){
         return 2;
     }else if(whiteWins && blackWins){
-        return gamestate[GAMESTATE_SIZE-1]==1?2:1;
+        return 3-gamestate[GAMESTATE_SIZE-1];
     }else{
         return -1;
     }
@@ -211,7 +208,7 @@ char** getLegalNextGameStates(char* gamestate,int* numNextGameStates){
             memcpy(nextGameStates[2*i],gamestate,GAMESTATE_SIZE*sizeof(char)+1);
             memcpy(nextGameStates[2*i+1],gamestate,GAMESTATE_SIZE*sizeof(char)+1);
             currPlayer = gamestate[GAMESTATE_SIZE-1];
-            nextPlayer = currPlayer==1?2:1;
+            nextPlayer = 3-currPlayer;
             nextGameStates[2*i][GAMESTATE_SIZE-1] = nextPlayer;
             nextGameStates[2*i+1][GAMESTATE_SIZE-1] = nextPlayer;
             nextGameStates[2*i][k] = currPlayer+1;
@@ -219,7 +216,7 @@ char** getLegalNextGameStates(char* gamestate,int* numNextGameStates){
             row = k/BOARD_COLS;
             col = k%BOARD_COLS;
             if(row>0){
-                nextGameStates[2*i+1][k-BOARD_COLS  ] = switches[(int)nextGameStates[2*i+1][k-BOARD_COLS  ]];
+                nextGameStates[2*i+1][k-BOARD_COLS] = switches[(int)nextGameStates[2*i+1][k-BOARD_COLS]];
                 if(col>0){
                     nextGameStates[2*i+1][k-BOARD_COLS-1] = switches[(int)nextGameStates[2*i+1][k-BOARD_COLS-1]];
                 }
@@ -228,7 +225,7 @@ char** getLegalNextGameStates(char* gamestate,int* numNextGameStates){
                 }
             }
             if(row<BOARD_ROWS-1){
-                nextGameStates[2*i+1][k+BOARD_COLS  ] = switches[(int)nextGameStates[2*i+1][k+BOARD_COLS  ]];
+                nextGameStates[2*i+1][k+BOARD_COLS] = switches[(int)nextGameStates[2*i+1][k+BOARD_COLS]];
                 if(col>0){
                     nextGameStates[2*i+1][k+BOARD_COLS-1] = switches[(int)nextGameStates[2*i+1][k+BOARD_COLS-1]];
                 }
@@ -237,100 +234,15 @@ char** getLegalNextGameStates(char* gamestate,int* numNextGameStates){
                 }
             }
             if(col>0){
-                nextGameStates[2*i+1][k           -1] = switches[(int)nextGameStates[2*i+1][k           -1]];
+                nextGameStates[2*i+1][k-1] = switches[(int)nextGameStates[2*i+1][k-1]];
             }
             if(col<BOARD_COLS-1){
-                nextGameStates[2*i+1][k           +1] = switches[(int)nextGameStates[2*i+1][k           +1]];
+                nextGameStates[2*i+1][k+1] = switches[(int)nextGameStates[2*i+1][k+1]];
             }
             i++;
         }
     }
-    //printf("nextGameStates: %p\n",nextGameStates);
     return nextGameStates;
-}
-
-float* unweightedWinStatistics(char* gamestate){
-    int k,i,j,q,whiteWins,blackWins,winner,numEmptyLocs,currPlayer,nextPlayer,row,col,simulations;
-    int switches[7] = {0,1,3,2,4,5,6};
-    int emptyLocs[96];
-    char* playingGame;
-    float* winStats;
-
-    winStats = (float*)malloc(PLAYERS*sizeof(float));
-    playingGame = (char*)malloc(GAMESTATE_SIZE*sizeof(char)+1);
-
-    simulations = 0;
-    whiteWins = 0;
-    blackWins = 0;
-
-    for(k=0;k<NUM_SIMULATIONS;k++){
-        memcpy(playingGame,gamestate,GAMESTATE_SIZE*sizeof(char)+1);
-        while(-1 == (winner=getWinner(playingGame))){
-            numEmptyLocs = 0;
-            q = 0;
-            for(i=0;i<BOARD_ROWS*BOARD_COLS;i++){
-                if(playingGame[i]==1){
-                    numEmptyLocs++;
-                    emptyLocs[q] = i;
-                    q++;
-                }
-            }
-            if(numEmptyLocs==0){
-                winner = playingGame[GAMESTATE_SIZE-1];
-                break;
-            }
-            i = rand()%numEmptyLocs;
-            j = emptyLocs[i];
-            currPlayer = playingGame[GAMESTATE_SIZE-1];
-            nextPlayer = currPlayer==1?2:1;
-            if(rand()%2==0){
-                playingGame[j] = currPlayer+1;
-            }else{
-                row = j/BOARD_COLS;
-                col = j%BOARD_COLS;
-                playingGame[j] = nextPlayer+3;
-                if(row>0){
-                    playingGame[j-BOARD_COLS  ] = switches[(int)playingGame[j-BOARD_COLS  ]];
-                    if(col>0){
-                        playingGame[j-BOARD_COLS-1] = switches[(int)playingGame[j-BOARD_COLS-1]];
-                    }
-                    if(col<BOARD_COLS-1){
-                        playingGame[j-BOARD_COLS+1] = switches[(int)playingGame[j-BOARD_COLS+1]];
-                    }
-                }
-                if(row<BOARD_ROWS-1){
-                    playingGame[j+BOARD_COLS  ] = switches[(int)playingGame[j+BOARD_COLS  ]];
-                    if(col>0){
-                        playingGame[j+BOARD_COLS-1] = switches[(int)playingGame[j+BOARD_COLS-1]];
-                    }
-                    if(col<BOARD_COLS-1){
-                        playingGame[j+BOARD_COLS+1] = switches[(int)playingGame[j+BOARD_COLS+1]];
-                    }
-                }
-                if(col>0){
-                    playingGame[j           -1] = switches[(int)playingGame[j           -1]];
-                }
-                if(col<BOARD_COLS-1){
-                    playingGame[j           +1] = switches[(int)playingGame[j           +1]];
-                }
-            }
-            playingGame[GAMESTATE_SIZE-1] = nextPlayer;
-        }
-        switch(winner){
-            case 1:
-                whiteWins++;
-                simulations++;
-                break;
-            case 2:
-                blackWins++;
-                simulations++;
-                break;
-        }
-    }
-    free(playingGame);
-    winStats[0] = (float)whiteWins/(float)simulations;
-    winStats[1] = (float)blackWins/(float)simulations;
-    return winStats;
 }
 
 int playRandomSimulation(char* gamestate){
@@ -359,7 +271,7 @@ int playRandomSimulation(char* gamestate){
         i = rand()%numEmptyLocs;
         j = emptyLocs[i];
         currPlayer = playingGame[GAMESTATE_SIZE-1];
-        nextPlayer = currPlayer==1?2:1;
+        nextPlayer = 3-currPlayer;
         if(rand()%2==0){
             playingGame[j] = currPlayer+1;
         }else{
@@ -367,7 +279,7 @@ int playRandomSimulation(char* gamestate){
             col = j%BOARD_COLS;
             playingGame[j] = nextPlayer+3;
             if(row>0){
-                playingGame[j-BOARD_COLS  ] = switches[(int)playingGame[j-BOARD_COLS  ]];
+                playingGame[j-BOARD_COLS] = switches[(int)playingGame[j-BOARD_COLS]];
                 if(col>0){
                     playingGame[j-BOARD_COLS-1] = switches[(int)playingGame[j-BOARD_COLS-1]];
                 }
@@ -376,7 +288,7 @@ int playRandomSimulation(char* gamestate){
                 }
             }
             if(row<BOARD_ROWS-1){
-                playingGame[j+BOARD_COLS  ] = switches[(int)playingGame[j+BOARD_COLS  ]];
+                playingGame[j+BOARD_COLS] = switches[(int)playingGame[j+BOARD_COLS]];
                 if(col>0){
                     playingGame[j+BOARD_COLS-1] = switches[(int)playingGame[j+BOARD_COLS-1]];
                 }
@@ -385,10 +297,10 @@ int playRandomSimulation(char* gamestate){
                 }
             }
             if(col>0){
-                playingGame[j           -1] = switches[(int)playingGame[j           -1]];
+                playingGame[j-1] = switches[(int)playingGame[j-1]];
             }
             if(col<BOARD_COLS-1){
-                playingGame[j           +1] = switches[(int)playingGame[j           +1]];
+                playingGame[j+1] = switches[(int)playingGame[j+1]];
             }
         }
         playingGame[GAMESTATE_SIZE-1] = nextPlayer;
@@ -404,7 +316,6 @@ int simulateGame(char* gamestate){
     char** nextStates;
     khiter_t ptr;
     team = gamestate[GAMESTATE_SIZE-1];
-    //printf("DEBUG (2.1.1)\n");
     if(-1 != (winner=getWinner(gamestate))){
         ptr = kh_get(str,simulationData,gamestate);
         if(ptr == kh_end(simulationData)){
@@ -418,24 +329,17 @@ int simulateGame(char* gamestate){
         }
         return winner;
     }
-    //printf("DEBUG (2.1.2)\n");
     nextStates = getLegalNextGameStates(gamestate,&numNextGameStates);
-    //printf("DEBUG (2.1.3)\n");
     pickRandom = 0;
     totalVisits = 0;
     for(i=0;i<numNextGameStates;i++){
-        //printf("simulationData=%p\n",simulationData);
-        //printf("n_buckets=%i, keys=%p\n",simulationData->n_buckets,simulationData->keys);
-        //printf("nextStates[i]=%s\n",nextStates[i]);
         ptr = kh_get(str,simulationData,nextStates[i]);
-        //printf("DEBUG 2.1.3.1\n");
         if(ptr == kh_end(simulationData)){
             pickRandom = 1;
             break;
         }
         totalVisits += kh_value(simulationData,ptr).visits;
     }
-    //printf("DEBUG (2.1.4)\n");
     bestNextState = NULL;
     if(!pickRandom){
         bestScore = 0.0;
@@ -498,43 +402,33 @@ int simulateGame(char* gamestate){
     }else{
         winner = simulateGame(bestNextState);
         ptr = kh_get(str,simulationData,bestNextState);
-        if(ptr == kh_end(simulationData)){
-            printf("WE HAVE A PROBLEM (2).\n");
-        }
         kh_value(simulationData,ptr).visits++;
         if(winner==team){
             kh_value(simulationData,ptr).wins++;
         }
     }
-    //printf("DEBUG (2.1.7)\n");
-    //free(bestNextState);
-    //printf("DEBUG (2.1.8)\n");
     return winner;
 }
 
 char* getBestMove(char* gamestate){
     int i,sim,numNextGameStates,totalVisits;
-    double score,bestScore,lnTotalVisits;
+    double score,bestScore/*,lnTotalVisits*/;
     char** nextStates;
     char* bestNextState;
     khiter_t ptr;
-    //printf("DEBUG (2.1)\n");
     for(sim=0;sim<NUM_SIMULATIONS;sim++){
         simulateGame(gamestate);
     }
-    //printf("DEBUG (2.2)\n");
     bestScore = 0;
     totalVisits = 0;
     bestNextState = NULL;
     nextStates = getLegalNextGameStates(gamestate,&numNextGameStates);
-    //printf("DEBUG (2.3)\n");
     for(i=0;i<numNextGameStates;i++){
         ptr = kh_get(str,simulationData,nextStates[i]);
         if(ptr == kh_end(simulationData)) continue;
         totalVisits += kh_value(simulationData,ptr).visits;
     }
-    //printf("DEBUG (2.4)\n");
-    lnTotalVisits = log((double)totalVisits);
+//    lnTotalVisits = log((double)totalVisits);
     for(i=0;i<numNextGameStates;i++){
         ptr = kh_get(str,simulationData,nextStates[i]);
         if(ptr == kh_end(simulationData)){
@@ -554,12 +448,7 @@ char* getBestMove(char* gamestate){
             free(nextStates[i]);
         }
     }
-    //printf("DEBUG (2.5)\n");
     free(nextStates);
-    if(bestNextState==NULL){
-        printf("WE HAVE A PROBLEM (1).\n");
-    }
-    //printf("DEBUG (2.6)\n");
     return bestNextState;
 }
 
@@ -568,7 +457,7 @@ int main(int argc, char **argv){
     int winner;
     char* gamestate = (char*)malloc(GAMESTATE_SIZE*sizeof(char)+1);
     srand(time(NULL));
-    simulationData = kh_init(str); //Setup the global map
+    simulationData = kh_init(str);
     initializeGameState(gamestate);
     if(argc > 1){
         if(parseFileIntoGameState(gamestate, argv[1]) == 0){
@@ -578,30 +467,9 @@ int main(int argc, char **argv){
             return 1;
         }
     }
-    /*int i,j,numNextGameStates;
-    FILE* outfile = fopen("output.txt","w");
-    char** nextStates = getLegalNextGameStates(gamestate,&numNextGameStates);
-    float* stats;
-    float whiteWinsBoard[BOARD_COLS*BOARD_ROWS];
-    for(i=0;i<numNextGameStates;i+=2){
-        stats = unweightedWinStatistics(nextStates[i]);
-        printGameState(nextStates[i],stdout);
-        printf("White Wins: %f\nBlack Wins: %f\n",stats[0],stats[1]);
-        whiteWinsBoard[i/2] = stats[0];
-    }
-    for(i=0;i<BOARD_ROWS;i++){
-        for(j=0;j<BOARD_COLS;j++){
-            fprintf(outfile,"%7f,",whiteWinsBoard[i*BOARD_COLS+j]);
-        }
-        fprintf(outfile,"\n");
-    }*/
-    //printf("DEBUG (1)\n");
     while(-1 == (winner=getWinner(gamestate))){
-        //printf("DEBUG (2)\n");
         gamestate = getBestMove(gamestate);
-        //printf("DEBUG (3)\n");
         printGameState(gamestate,stdout);
-        //printf("DEBUG (4)\n");
     }
     fprintf(stdout,"Winner: %i\n",winner);
     kh_destroy(str,simulationData);
